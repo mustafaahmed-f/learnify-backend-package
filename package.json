@@ -1,0 +1,50 @@
+{
+  "name": "@mustafahmed1997/learnify-backend",
+  "version": "1.0.0",
+  "description": "Shared Clerk-based auth middlewares, role checking, error utilities, and Express types for Learnify backend microservices.",
+  "keywords": [
+    "express",
+    "clerk",
+    "middleware",
+    "learnify"
+  ],
+  "license": "ISC",
+  "author": "Mostafa Ahmed",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mustafaahmed-f/learnify-backend-package.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "@clerk/express": "^1.7.74",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@clerk/express": "^1.7.74",
+    "@types/express": "^5.0.3",
+    "@types/node": "^20.19.39",
+    "express": "^5.1.0",
+    "typescript": "^5.1.6",
+    "vitest": "^3.0.0"
+  }
+}
