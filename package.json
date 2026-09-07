@@ -1,6 +1,6 @@
 {
   "name": "@mustafahmed1997/learnify-backend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Shared Clerk-based auth middlewares, role checking, error utilities, and Express types for Learnify backend microservices.",
   "keywords": [
     "express",
