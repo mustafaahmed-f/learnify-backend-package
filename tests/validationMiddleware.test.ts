@@ -47,6 +47,7 @@ describe("validationMiddleware", () => {
         expect.objectContaining({ field: "age" }),
       ]),
     );
+
     req.validationErrorArr!.forEach((entry) => {
       expect(entry).toHaveProperty("field");
       expect(entry).toHaveProperty("message");
