@@ -11,6 +11,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: ClerkUser;
+      validationErrorArr?: { field: string; message: string }[];
     }
   }
 }
