@@ -15,10 +15,10 @@ function createRes() {
   return res as Response;
 }
 
-function mockRole(role: string | undefined) {
+function mockUserRoles(roles: string[] | undefined) {
   vi.mocked(getAuth).mockReturnValue({
-    sessionClaims: role
-      ? { userMetadata: { role, dbUserId: "db_1" } }
+    sessionClaims: roles
+      ? { userMetadata: { roles, dbUserId: "db_1" } }
       : undefined,
   } as any);
 }
@@ -28,85 +28,253 @@ describe("checkRole", () => {
     vi.mocked(getAuth).mockReset();
   });
 
-  it("allows ADMIN when ADMIN is permitted", async () => {
-    mockRole("ADMIN");
+  describe("mode: Any (default)", () => {
+    it("authorizes when the user has one of the allowed roles", () => {
+      mockUserRoles(["ADMIN"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(next).toHaveBeenCalledWith();
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("forbids when the user has none of the allowed roles", () => {
+      mockUserRoles(["STUDENT"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: "Forbidden" });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("authorizes when one of multiple allowed roles matches", () => {
+      mockUserRoles(["INSTRUCTOR"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Any" })(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it("authorizes when the user has extra roles beyond the match", () => {
+      mockUserRoles(["STUDENT", "INSTRUCTOR"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["INSTRUCTOR"], { mode: "Any" })(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("mode: All", () => {
+    it("authorizes when the user has all required roles", () => {
+      mockUserRoles(["ADMIN", "INSTRUCTOR"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "All" })(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("forbids when one required role is missing", () => {
+      mockUserRoles(["ADMIN"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "All" })(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ message: "Forbidden" });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("authorizes when the user has extra roles beyond the required set", () => {
+      mockUserRoles(["ADMIN", "INSTRUCTOR", "STUDENT"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "All" })(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("mode: Exact", () => {
+    it("authorizes when the user's roles exactly match the allowed roles", () => {
+      mockUserRoles(["ADMIN", "INSTRUCTOR"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Exact" })(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("forbids when a required role is missing", () => {
+      mockUserRoles(["ADMIN"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Exact" })(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("forbids when the user has an additional role beyond the allowed set", () => {
+      mockUserRoles(["ADMIN", "INSTRUCTOR", "STUDENT"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Exact" })(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("forbids when the roles are completely different", () => {
+      mockUserRoles(["STUDENT"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"], { mode: "Exact" })(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(next).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("input validation", () => {
+    it("passes an error to next() when allowedRoles is empty", () => {
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole([])(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(next).mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(res.status).not.toHaveBeenCalled();
+      expect(getAuth).not.toHaveBeenCalled();
+    });
+
+    it("passes an error to next() when allowedRoles has duplicate values", () => {
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN", "ADMIN"])(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(next).mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("returns 403 when sessionClaims is missing entirely", () => {
+      mockUserRoles(undefined);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "User roles not found",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("returns 403 when userMetadata has no roles field", () => {
+      vi.mocked(getAuth).mockReturnValue({
+        sessionClaims: { userMetadata: { dbUserId: "db_1" } },
+      } as any);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "User roles not found",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("returns 403 when the user's roles array is empty", () => {
+      mockUserRoles([]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        message: "User roles not found",
+      });
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it("passes an error to next() when the user's roles from Clerk have duplicates", () => {
+      mockUserRoles(["ADMIN", "ADMIN"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(next).mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+
+    it("passes an error to next() when the user's roles from Clerk contain an invalid role", () => {
+      mockUserRoles(["ADMIN", "SUPERADMIN"]);
+      const req = {} as Request;
+      const res = createRes();
+      const next = vi.fn() as NextFunction;
+
+      checkRole(["ADMIN"])(req, res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(next).mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(res.status).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not send a double response on success", () => {
+    mockUserRoles(["ADMIN"]);
     const req = {} as Request;
     const res = createRes();
     const next = vi.fn() as NextFunction;
 
-    await checkRole(["ADMIN"])(req, res, next);
+    checkRole(["ADMIN"])(req, res, next);
 
-    expect(next).toHaveBeenCalledTimes(1);
     expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("allows INSTRUCTOR when INSTRUCTOR is permitted", async () => {
-    mockRole("INSTRUCTOR");
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["INSTRUCTOR"])(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-  });
-
-  it("allows STUDENT when STUDENT is permitted", async () => {
-    mockRole("STUDENT");
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["STUDENT"])(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-  });
-
-  it("allows a role when multiple allowed roles are supplied", async () => {
-    mockRole("INSTRUCTOR");
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["ADMIN", "INSTRUCTOR"])(req, res, next);
-
-    expect(next).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns 403 and does not call next() for a forbidden role", async () => {
-    mockRole("STUDENT");
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["ADMIN"])(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(res.json).toHaveBeenCalledWith({ message: "Unauthorized !!" });
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("returns 403 for a role outside the allowed list", async () => {
-    mockRole("STUDENT");
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["ADMIN", "INSTRUCTOR"])(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("returns 403 safely when there is no session/role information", async () => {
-    mockRole(undefined);
-    const req = {} as Request;
-    const res = createRes();
-    const next = vi.fn() as NextFunction;
-
-    await checkRole(["ADMIN"])(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(next).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
   });
 });

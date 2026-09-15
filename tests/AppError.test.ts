@@ -34,4 +34,14 @@ describe("AppError", () => {
       expect((err as AppError).statusCode).toBe(403);
     }
   });
+
+  it("preserves instanceof for subclasses (regression: setPrototypeOf must use new.target)", () => {
+    class CustomError extends AppError {}
+
+    const err = new CustomError("Custom", 422);
+
+    expect(err).toBeInstanceOf(CustomError);
+    expect(err).toBeInstanceOf(AppError);
+    expect(err).toBeInstanceOf(Error);
+  });
 });

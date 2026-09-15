@@ -17,7 +17,8 @@ export async function checkAuth(
     }
 
     const clerkId = userId;
-    const userMetadata = sessionClaims?.userMetadata as ClerkUser["userMetadata"];
+    const userMetadata =
+      sessionClaims?.userMetadata as ClerkUser["userMetadata"];
     const email = sessionClaims?.email as string | undefined;
     const firstName = sessionClaims?.firstName as string | undefined;
     const lastName = sessionClaims?.lastName as string | undefined;
