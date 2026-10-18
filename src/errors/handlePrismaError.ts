@@ -84,7 +84,7 @@ export function handlePrismaError(error: unknown): {
 
   return {
     status: 500,
-    message: `Unknown server error: ${
+    message: `Non-prisma error: ${
       error instanceof Error ? error.message : String(error)
     }`,
   };
