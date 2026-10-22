@@ -102,7 +102,7 @@ describe("handlePrismaError", () => {
     const result = handlePrismaError(new Error("boom"));
 
     expect(result.status).toBe(500);
-    expect(result.message).toBe("Unknown server error: boom");
+    expect(result.message).toBe("Non-prisma error: boom");
   });
 
   it("does not misidentify a Prisma-shaped error whose code fails the P#### pattern", () => {
@@ -115,20 +115,57 @@ describe("handlePrismaError", () => {
     const result = handlePrismaError(null);
 
     expect(result.status).toBe(500);
-    expect(result.message).toBe("Unknown server error: null");
+    expect(result.message).toBe("Non-prisma error: null");
   });
 
   it("handles undefined input safely", () => {
     const result = handlePrismaError(undefined);
 
     expect(result.status).toBe(500);
-    expect(result.message).toBe("Unknown server error: undefined");
+    expect(result.message).toBe("Non-prisma error: undefined");
   });
 
   it("handles a non-object primitive input safely", () => {
     const result = handlePrismaError("just a string");
 
     expect(result.status).toBe(500);
-    expect(result.message).toBe("Unknown server error: just a string");
+    expect(result.message).toBe("Non-prisma error: just a string");
+  });
+
+
+  it("joins a multi-column P2002 meta.target array into the message", () => {
+    const result = handlePrismaError({
+      code: "P2002",
+      meta: { target: ["courseId", "studentId"] },
+    });
+
+    expect(result).toEqual({
+      status: 409,
+      message: "Duplicate value for courseId,studentId",
+    });
+  });
+
+  it("recognizes a Prisma code on a real Error instance", () => {
+    const err = Object.assign(new Error("Record to delete does not exist."), {
+      code: "P2025",
+    });
+
+    expect(handlePrismaError(err)).toEqual({
+      status: 404,
+      message: "Record not found",
+    });
+  });
+
+  it("requires exactly four digits after P in the error code", () => {
+    expect(handlePrismaError({ code: "P202" }).status).toBe(500);
+    expect(handlePrismaError({ code: "P20025" }).status).toBe(500);
+    expect(handlePrismaError({ code: "p2025" }).status).toBe(500);
+  });
+
+  it("ignores a non-string code", () => {
+    const result = handlePrismaError({ code: 2025, message: "numeric" });
+
+    expect(result.status).toBe(500);
+    expect(result.message).toBe("Non-prisma error: [object Object]");
   });
 });

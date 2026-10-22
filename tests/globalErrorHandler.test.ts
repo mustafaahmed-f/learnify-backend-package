@@ -36,7 +36,10 @@ describe("globalErrorHandler", () => {
 
     globalErrorHandler(err, req, res, next);
 
-    expect(res.json).toHaveBeenCalledWith({ error: "Not found" });
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: "Not found",
+    });
     expect(res.json).toHaveBeenCalledTimes(1);
   });
 
@@ -54,6 +57,7 @@ describe("globalErrorHandler", () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.status).toHaveBeenCalledTimes(1);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: "Validation failed",
       errors: [
         { location: "body", field: "role", message: "Invalid role" },
@@ -73,6 +77,7 @@ describe("globalErrorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
+      success: false,
       error: "Validation failed",
       errors: [],
     });
@@ -104,7 +109,10 @@ describe("globalErrorHandler", () => {
     globalErrorHandler(err, req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith({ error: "Internal server error" });
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: "Internal server error",
+    });
   });
 
   it("falls back to 500 for an unknown thrown value", () => {
@@ -115,7 +123,10 @@ describe("globalErrorHandler", () => {
     globalErrorHandler("some string error", req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith({ error: "Internal server error" });
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: "Internal server error",
+    });
   });
 
   it("does not leak the underlying error's message in a 500 response", () => {
@@ -131,7 +142,10 @@ describe("globalErrorHandler", () => {
       unknown
     >;
     expect(JSON.stringify(jsonArg)).not.toContain("postgres://secret");
-    expect(jsonArg).toEqual({ error: "Internal server error" });
+    expect(jsonArg).toEqual({
+      success: false,
+      error: "Internal server error",
+    });
   });
 
   it("does not leak the error's stack trace in a 500 response", () => {
@@ -159,5 +173,67 @@ describe("globalErrorHandler", () => {
 
     expect(res.status).toHaveBeenCalledTimes(1);
     expect(res.json).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs the original error with console.error", () => {
+    const err = new Error("db down");
+
+    globalErrorHandler(
+      err,
+      {} as Request,
+      createRes(),
+      vi.fn() as NextFunction,
+    );
+
+    expect(console.error).toHaveBeenCalledWith(err);
+  });
+
+  it("does not call next(), since it always ends the response", () => {
+    const next = vi.fn() as NextFunction;
+
+    globalErrorHandler(
+      new AppError("Conflict", 409),
+      {} as Request,
+      createRes(),
+      next,
+    );
+    globalErrorHandler(new Error("boom"), {} as Request, createRes(), next);
+
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("uses the status code of a custom AppError subclass", () => {
+    class ConflictError extends AppError {
+      constructor(message: string) {
+        super(message, 409);
+      }
+    }
+    const res = createRes();
+
+    globalErrorHandler(
+      new ConflictError("Email already used"),
+      {} as Request,
+      res,
+      vi.fn() as NextFunction,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      error: "Email already used",
+    });
+  });
+
+  it("treats a plain { status, message } object as an unknown error (500)", () => {
+    const res = createRes();
+
+    globalErrorHandler(
+      { status: 404, message: "Record not found" },
+      {} as Request,
+      res,
+      vi.fn() as NextFunction,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(500);
   });
 });

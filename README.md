@@ -1,17 +1,54 @@
 # @mustafahmed1997/learnify-backend
 
-Shared backend utilities for Learnify microservices: Clerk-based auth/role
-middlewares, Zod-based request validation, error handling utilities, response
-shaping helpers, and the Express `Request` type augmentation for `req.user` —
-all importable from the package root.
+Shared backend building blocks for the Learnify e-learning microservices:
+Clerk-based authentication and role middleware, Zod request validation, a
+consistent error model with an Express error handler, Prisma error mapping,
+response/message helpers, and the typed `req.user` augmentation.
 
-## What this package solves
+Every service needs to answer the same questions: who is calling, are they
+allowed to do this, is the request well-formed, and what shape should
+responses and errors take. This package answers them once, so services don't
+diverge.
 
-Every Learnify microservice needs the same handful of cross-cutting pieces:
-who is the caller (Clerk auth), are they allowed to do this (role checks),
-is their request well-formed (Zod validation), and what shape should errors
-and responses take. This package centralizes all of that so each service
-doesn't reimplement or subtly diverge on it.
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Requirements and compatibility](#requirements-and-compatibility)
+- [Quick start](#quick-start)
+- [API reference](#api-reference)
+  - [Middleware](#middleware)
+  - [Errors](#errors)
+  - [Response and message helpers](#response-and-message-helpers)
+  - [Role utilities and constants](#role-utilities-and-constants)
+  - [Types](#types)
+- [Error handling](#error-handling)
+- [Testing](#testing)
+- [Build and development](#build-and-development)
+- [Project structure](#project-structure)
+- [Contributing](#contributing)
+- [Publishing](#publishing)
+
+## Features
+
+| Export | Kind | Use it to |
+| --- | --- | --- |
+| `checkAuth` | middleware | Reject unauthenticated requests (`401`) and attach `req.user` |
+| `checkRole` | middleware factory | Authorize by Clerk roles with `Any` / `All` / `Exact` matching |
+| `validationMiddleware` | middleware factory | Validate `body`, `params` and `query` with Zod and write parsed values back |
+| `AppError` | class | Throw an operational error with an HTTP status code |
+| `ValidationError` | class | Throw a `400` error with field-level details |
+| `globalErrorHandler` | error middleware | Turn errors into consistent JSON responses |
+| `handlePrismaError` | function | Map a Prisma error to `{ status, message }` |
+| `handleCaughtError` | function | Forward any caught error to `next()` in the right shape |
+| `getJsonResponse` | function | Build a response body that omits `undefined` fields |
+| `getSuccessMsg`, `getErrorMsg` | functions | Build consistent success/error sentences |
+| `requiredFieldMsg`, `minLengthMsg`, … | functions | Reuse standard validation messages in Zod schemas |
+| `checkUnique`, `checkValidRoles` | functions | Validate role arrays outside the middleware |
+| `validRoles` | constant | The canonical role list: `STUDENT`, `INSTRUCTOR`, `ADMIN` |
+| `Role`, `ClerkUser`, `Location`, `ValidationErrorItem`, `JsonResponseOptions`, `CheckRoleOptions`, `RoleCheckMode` | types | Type your services against the same contracts |
+
+Everything is exported from the package root. There are no subpath exports.
 
 ## Installation
 
@@ -19,516 +56,518 @@ doesn't reimplement or subtly diverge on it.
 npm install @mustafahmed1997/learnify-backend
 ```
 
-### Peer dependencies
-
-This package expects the consuming service to provide its own `express`,
-`@clerk/express`, and `zod` installs (so there is a single shared instance of
-each at runtime, and Clerk's request-scoped auth context works correctly):
+`express`, `@clerk/express` and `zod` are **peer dependencies**. Install them in
+the consuming service so a single instance of each is shared at runtime (Clerk's
+request auth context and Zod's schema classes depend on this):
 
 ```bash
 npm install express @clerk/express zod
 ```
 
-## Setup: `clerkMiddleware()` before `checkAuth` / `checkRole`
+| Peer dependency | Supported range |
+| --- | --- |
+| `express` | `^5.1.0` |
+| `@clerk/express` | `^1.7.74` |
+| `zod` | `^4.5.4` |
 
-Both `checkAuth` and `checkRole` read Clerk auth state via `getAuth(req)`,
-which requires `clerkMiddleware()` from `@clerk/express` to have already run
-on the request:
+## Requirements and compatibility
+
+- **ESM only.** The package is `"type": "module"` and its `exports` map
+  provides only an `import` condition. Use `import`, not `require()`.
+- **Express 5.** The middleware targets Express 5 (for example, it handles
+  Express 5's read-only `req.query` getter).
+- **Node.js.** The package doesn't declare an `engines` field. Its peer
+  `@clerk/express` (1.7.x) requires Node.js `>= 18.17.0`.
+- **TypeScript.** Declarations (`.d.ts`) are bundled; no `@types` package is
+  needed. Because entry points are resolved through `exports`, the consuming
+  project needs `moduleResolution` set to `node16`, `nodenext` or `bundler`.
+  The package itself compiles with TypeScript 5 to an `ES2020` target.
+
+## Quick start
 
 ```ts
 import express from "express";
 import { clerkMiddleware } from "@clerk/express";
+import { z } from "zod";
 import {
+  AppError,
   checkAuth,
   checkRole,
-  validationMiddleware,
+  getJsonResponse,
+  getSuccessMsg,
   globalErrorHandler,
+  handleCaughtError,
+  validationMiddleware,
 } from "@mustafahmed1997/learnify-backend";
+import { prisma } from "./prisma.js"; // your service's Prisma client
 
 const app = express();
 
 app.use(express.json());
-app.use(clerkMiddleware());
-```
-
-## Public exports
-
-| Export | Kind | Purpose |
-| --- | --- | --- |
-| `checkAuth` | middleware | Requires Clerk authentication, attaches `req.user` |
-| `checkRole` | middleware factory | Role-based authorization (`Any` / `All` / `Exact`) |
-| `validationMiddleware` | middleware factory | Validates `body` / `params` / `query` against Zod schemas |
-| `validRoles`, `Role` | const / type | The canonical list of roles and their type |
-| `AppError` | class | Base operational error carrying an HTTP status code |
-| `ValidationError` | class | `AppError` subclass carrying structured field errors |
-| `ValidationErrorItem` | type | Shape of one entry in `ValidationError.errors` |
-| `globalErrorHandler` | middleware | Express error handler; register last |
-| `handlePrismaError` | function | Maps a Prisma error to `{ status, message }` |
-| `getErrorMsg`, `getSuccessMsg` | function | Consistent error/success message builders |
-| `getJsonResponse`, `JsonResponseOptions` | function / type | Builds a sparse, consistent response body |
-| `checkUnique` | function | Checks an array has no duplicate values |
-| `checkValidRoles` | function | Checks every value in an array is a valid `Role` |
-| `requiredFieldMsg`, `minLengthMsg`, `maxLengthMsg`, `invalidSchemaFormatMsg`, `invalidEmailMsg`, `invalidPasswordMsg`, `invalidDateFormatMsg`, `futureDateRequiredMsg`, `invalidNumberMsg`, `positiveNumberMsg`, `invalidUrlMsg` | function | Reusable validation error message builders (pair well with custom Zod `.refine()`/`.check()` messages) |
-| `ClerkUser` | type | Shape of `req.user` |
-| `Location` | type | `"body" \| "params" \| "query"` |
-| `CheckRoleOptions`, `RoleCheckMode` | type | Options accepted by `checkRole` |
-
-Importing anything from the package root also loads the Express `Request`
-type augmentation (`req.user?: ClerkUser`), so no extra `express.d.ts` is
-needed in the consuming service.
-
-## `checkAuth`
-
-Verifies the request is authenticated via Clerk and attaches a typed
-`req.user` (a `ClerkUser`) for downstream handlers.
-
-```ts
-import { checkAuth } from "@mustafahmed1997/learnify-backend";
-
-app.get("/me", checkAuth, (req, res) => {
-  res.json(req.user);
-});
-```
-
-If the request is not authenticated, `checkAuth` responds `401` with:
-
-```json
-{ "error": "Unauthenticated. Login first please." }
-```
-
-and does not call `next()`. If reading the Clerk auth context throws, the
-error is passed to `next(error)` for `globalErrorHandler` to handle.
-
-## `checkRole`
-
-Authorizes a request based on the caller's roles in the Clerk session claims
-(`sessionClaims.userMetadata.roles`, an array). Takes an array of allowed
-roles and an optional `{ mode }`.
-
-```ts
-import { checkRole } from "@mustafahmed1997/learnify-backend";
-
-app.delete(
-  "/courses/:id",
-  checkRole(["ADMIN", "INSTRUCTOR"]),
-  deleteCourseController,
-);
-```
-
-### Modes
-
-`mode` defaults to `"Any"` when omitted.
-
-- **`Any`** — the caller needs at least one of `allowedRoles`. Extra roles on
-  either side are ignored.
-
-  ```ts
-  // Passes if the caller has ADMIN or INSTRUCTOR (or both)
-  checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Any" });
-  ```
-
-- **`All`** — the caller must have every role in `allowedRoles`, but may have
-  additional roles beyond that.
-
-  ```ts
-  // Passes only if the caller has both ADMIN and INSTRUCTOR (extra roles OK)
-  checkRole(["ADMIN", "INSTRUCTOR"], { mode: "All" });
-  ```
-
-- **`Exact`** — the caller's role set must match `allowedRoles` exactly, with
-  no missing or extra roles.
-
-  ```ts
-  // Passes only if the caller's roles are exactly {ADMIN, INSTRUCTOR}
-  checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Exact" });
-  ```
-
-### Responses
-
-- Empty or duplicate `allowedRoles`, or duplicate/invalid roles coming back
-  from Clerk's session claims, are treated as misconfiguration/upstream data
-  problems: the middleware calls `next(error)` with a plain `Error`, which
-  `globalErrorHandler` turns into a `500`.
-- No `sessionClaims`, no `userMetadata.roles`, or an empty roles array
-  responds `403` with `{ "message": "User roles not found" }` and does not
-  call `next()`.
-- A caller whose roles don't satisfy the selected mode responds `403` with
-  `{ "message": "Forbidden" }` and does not call `next()`.
-- An authorized caller calls `next()` with no arguments.
-
-### Combined route example
-
-```ts
-app.patch(
-  "/users/:id/role",
-  checkAuth,
-  checkRole(["ADMIN"]),
-  updateRoleController,
-);
-```
-
-## `validationMiddleware`
-
-Validates `req.body`, `req.params`, and/or `req.query` against Zod schemas.
-Any subset of the three locations may be supplied — omitted locations are
-skipped.
-
-```ts
-import { z } from "zod";
-import { validationMiddleware } from "@mustafahmed1997/learnify-backend";
+app.use(clerkMiddleware()); // must run before checkAuth / checkRole
 
 const createCourseSchema = z.object({
-  title: z.string().min(3),
+  title: z.string().trim().min(3),
   price: z.number().positive(),
 });
-
-const courseIdParamsSchema = z.object({
-  id: z.string().uuid(),
-});
-
-const paginationQuerySchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-});
-
-app.post(
-  "/courses",
-  validationMiddleware({ body: createCourseSchema }),
-  createCourseController,
-);
-
-app.get(
-  "/courses/:id",
-  validationMiddleware({ params: courseIdParamsSchema }),
-  getCourseController,
-);
-
-app.get(
-  "/courses",
-  validationMiddleware({ query: paginationQuerySchema }),
-  listCoursesController,
-);
-
-// All three at once:
-app.patch(
-  "/courses/:id",
-  validationMiddleware({
-    params: courseIdParamsSchema,
-    body: createCourseSchema.partial(),
-    query: paginationQuerySchema,
-  }),
-  updateCourseController,
-);
-```
-
-- On success, `validationMiddleware` calls `next()` with no arguments **and**
-  writes each schema's parsed/transformed output back onto `req.body`,
-  `req.params`, and/or `req.query`. This means transforms like
-  `z.coerce.number()` or `.default(...)` are reflected in what the
-  controller sees — e.g. `req.query.page` above is a `number`, not the raw
-  query string.
-- On failure, it calls `next(validationError)` with a `ValidationError`
-  (never touches `res` directly) collecting **every** failing field across
-  **all** provided locations in one pass — it does not stop at the first
-  invalid location.
-- Register `globalErrorHandler` after your routes to turn that
-  `ValidationError` into the `400` response documented below.
-
-## Error classes
-
-### `AppError`
-
-A typed operational error carrying an HTTP status code.
-
-```ts
-import { AppError } from "@mustafahmed1997/learnify-backend";
-
-if (!course) {
-  throw new AppError("Course not found", 404);
-}
-```
-
-### `ValidationError`
-
-An `AppError` subclass (status code always `400`) that also carries the list
-of field-level failures. This is what `validationMiddleware` throws, but you
-can also construct and throw it directly for manual validation:
-
-```ts
-import { ValidationError } from "@mustafahmed1997/learnify-backend";
-import type { ValidationErrorItem } from "@mustafahmed1997/learnify-backend";
-
-const errors: ValidationErrorItem[] = [
-  { location: "body", field: "role", message: "Invalid role" },
-];
-
-throw new ValidationError("Validation failed", errors);
-```
-
-`ValidationErrorItem` shape:
-
-```ts
-type ValidationErrorItem = {
-  location: "body" | "params" | "query";
-  field: string;
-  message: string;
-};
-```
-
-## `globalErrorHandler`
-
-Express error-handling middleware. Register it **last**, after all routes:
-
-```ts
-import { globalErrorHandler } from "@mustafahmed1997/learnify-backend";
-
-app.use(globalErrorHandler);
-```
-
-Behavior, checked in this order:
-
-1. **`ValidationError`** (including whatever `validationMiddleware` throws)
-   → `400` with the field-level errors:
-
-   ```json
-   {
-     "error": "Validation failed",
-     "errors": [
-       { "location": "body", "field": "role", "message": "Invalid role" },
-       { "location": "params", "field": "userId", "message": "Invalid user ID" }
-     ]
-   }
-   ```
-
-2. Any other **`AppError`** → its own `statusCode` with `{ "error": err.message }`.
-3. Anything else (an unexpected `Error`, a rejected promise with a non-Error
-   value, etc.) → `500` with a fixed, generic body that never leaks the
-   underlying error's message or stack:
-
-   ```json
-   { "error": "Internal server error" }
-   ```
-
-   The original error is still logged via `console.error` for observability
-   — it just isn't sent to the client.
-
-## `handlePrismaError`
-
-Maps a Prisma error (by `error.code` / `error.name`) to a plain
-`{ status, message }` pair, for services that want to translate Prisma
-failures into an `AppError` themselves:
-
-```ts
-import { handlePrismaError, AppError } from "@mustafahmed1997/learnify-backend";
-
-try {
-  await prisma.course.create({ data });
-} catch (err) {
-  const { status, message } = handlePrismaError(err);
-  throw new AppError(message, status);
-}
-```
-
-Handles `P2002` (unique constraint), `P2003` (invalid foreign key), `P2025`
-(record not found), `P2014` (invalid relation), `P2000` (value too long),
-`PrismaClientValidationError`, and falls back to a generic `500` message for
-anything else — including `null`/`undefined`/non-object inputs.
-
-## `validRoles` and `Role`
-
-```ts
-import { validRoles } from "@mustafahmed1997/learnify-backend";
-import type { Role } from "@mustafahmed1997/learnify-backend";
-
-console.log(validRoles); // ["STUDENT", "INSTRUCTOR", "ADMIN"]
-
-function isValidRole(value: string): value is Role {
-  return (validRoles as readonly string[]).includes(value);
-}
-```
-
-## Role-checking utilities
-
-Low-level building blocks used internally by `checkRole`, exported for
-services that need custom role-array validation outside of the middleware:
-
-```ts
-import { checkUnique, checkValidRoles } from "@mustafahmed1997/learnify-backend";
-
-checkUnique(["ADMIN", "ADMIN"]); // false
-checkUnique(["ADMIN", "STUDENT"]); // true
-
-checkValidRoles(["ADMIN", "STUDENT"]); // true
-checkValidRoles(["ADMIN", "SUPERADMIN"]); // false — not in validRoles
-```
-
-## Response utilities
-
-### `getJsonResponse`
-
-Builds a response body containing only the fields you actually pass —
-`undefined` fields are omitted rather than serialized:
-
-```ts
-import { getJsonResponse } from "@mustafahmed1997/learnify-backend";
-
-res.status(200).json(
-  getJsonResponse({
-    message: "Course created",
-    data: course,
-  }),
-);
-// { "message": "Course created", "data": { ... } }
-```
-
-### `getErrorMsg` / `getSuccessMsg`
-
-Small helpers for consistent, grammatically-correct singular/plural messages:
-
-```ts
-import { getErrorMsg, getSuccessMsg } from "@mustafahmed1997/learnify-backend";
-
-getErrorMsg("Course", "was", "not found"); // "Course was not found"
-getErrorMsg("Courses", "were", "not found"); // "Courses were not found"
-
-getSuccessMsg("Course", "has", "created"); // "Course has been created successfully"
-getSuccessMsg("Courses", "have", "created"); // "Courses have been created successfully"
-```
-
-## Validation error message utilities
-
-Reusable message builders for custom Zod validators (e.g. inside
-`.refine()`), so wording stays consistent across services:
-
-```ts
-import { z } from "zod";
-import {
-  requiredFieldMsg,
-  minLengthMsg,
-  invalidEmailMsg,
-} from "@mustafahmed1997/learnify-backend";
-
-const schema = z.object({
-  email: z.string().email(invalidEmailMsg()),
-  password: z.string().min(8, minLengthMsg(8)),
-});
-```
-
-Available: `requiredFieldMsg(field)`, `minLengthMsg(min)`,
-`maxLengthMsg(max)`, `invalidSchemaFormatMsg(field, format)`,
-`invalidEmailMsg()`, `invalidPasswordMsg()`, `invalidDateFormatMsg()`,
-`futureDateRequiredMsg()`, `invalidNumberMsg(field)`,
-`positiveNumberMsg(field)`, `invalidUrlMsg()`.
-
-## `ClerkUser` and `req.user` typing
-
-Importing anything from this package's root automatically loads the Express
-`Request` augmentation, so `req.user` is typed as `ClerkUser | undefined`
-wherever `express`'s `Request` type is used — no extra `express.d.ts` needed
-in the consuming service.
-
-```ts
-import type { Request, Response } from "express";
-import type { ClerkUser } from "@mustafahmed1997/learnify-backend";
-
-function exampleController(req: Request, res: Response) {
-  const clerkId = req.user?.clerkId;
-  const role = req.user?.userMetadata.role;
-
-  res.json({ clerkId, role });
-}
-```
-
-`ClerkUser` shape:
-
-```ts
-type ClerkUser = {
-  clerkId: string;
-  userMetadata: {
-    role: "STUDENT" | "INSTRUCTOR" | "ADMIN";
-    dbUserId: string;
-  };
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  imageURL?: string;
-};
-```
-
-> Note: `checkAuth` attaches `req.user` from `sessionClaims.userMetadata`
-> as-is (singular `role`). `checkRole` performs its own authorization check
-> directly against `sessionClaims.userMetadata.roles` (plural, an array) —
-> it does not read `req.user`. If your Clerk session claims only populate
-> `roles`, use `checkRole` for authorization decisions rather than
-> `req.user.userMetadata.role`.
-
-## TypeScript usage
-
-The package ships its own `.d.ts` declarations — no `@types` package needed.
-It targets ESM (`"type": "module"`) and expects a `moduleResolution` setting
-that supports package `exports` (e.g. `node16`, `nodenext`, or `bundler`).
-
-## Using this package in the Learnify microservices
-
-A typical service wires the pieces together in this order:
-
-```ts
-import express from "express";
-import { clerkMiddleware } from "@clerk/express";
-import {
-  checkAuth,
-  checkRole,
-  validationMiddleware,
-  globalErrorHandler,
-} from "@mustafahmed1997/learnify-backend";
-
-const app = express();
-
-app.use(express.json());
-app.use(clerkMiddleware()); // must run before checkAuth/checkRole
 
 app.post(
   "/courses",
   checkAuth,
   checkRole(["INSTRUCTOR", "ADMIN"]),
   validationMiddleware({ body: createCourseSchema }),
-  createCourseController,
+  async (req, res, next) => {
+    try {
+      const course = await prisma.course.create({ data: req.body });
+      res.status(201).json(
+        getJsonResponse({
+          success: true,
+          message: getSuccessMsg("Course", "has", "created"),
+          data: course,
+        }),
+      );
+    } catch (error) {
+      handleCaughtError(error, next);
+    }
+  },
 );
 
-// ...all other routes...
+app.get("/courses/:id", async (req, res, next) => {
+  try {
+    const course = await prisma.course.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!course) throw new AppError("Course not found", 404);
+    res.json(getJsonResponse({ success: true, data: course }));
+  } catch (error) {
+    handleCaughtError(error, next);
+  }
+});
 
-app.use(globalErrorHandler); // must be registered last
+app.use(globalErrorHandler); // register last
 ```
 
-Controllers can then `throw new AppError(...)` / `throw new ValidationError(...)`
-(or pass them to `next(...)`) and rely on `globalErrorHandler` to produce a
-consistent response shape across every microservice.
+## API reference
 
-## Running tests
+### Middleware
+
+#### `checkAuth(req, res, next)`
+
+Requires a Clerk-authenticated request and attaches a typed `req.user`.
+`clerkMiddleware()` from `@clerk/express` must run first, because `checkAuth`
+reads the auth state with `getAuth(req)`.
+
+```ts
+app.get("/me", checkAuth, (req, res) => {
+  res.json(req.user);
+});
+```
+
+| Situation | Result |
+| --- | --- |
+| Authenticated with a `userId` | Sets `req.user`, calls `next()` |
+| Not authenticated, or no `userId` | Responds `401` `{ "error": "Unauthenticated. Login first please." }`; `next()` is not called |
+| `getAuth` throws (e.g. `clerkMiddleware()` missing) | Calls `next(error)` → `500` from `globalErrorHandler` |
+
+`req.user` is built from the session token: `clerkId` comes from `userId`.
+`email`, `firstName`, `lastName`, `imageURL` and `userMetadata` are read from
+custom session claims of the same names. Add them to your Clerk session token
+for them to be populated; missing claims become `undefined`.
+
+#### `checkRole(allowedRoles, options?)`
+
+Returns a middleware that authorizes the caller against the roles array at
+`sessionClaims.userMetadata.roles`. Like `checkAuth`, it requires
+`clerkMiddleware()` to have run.
+
+```ts
+import { checkRole } from "@mustafahmed1997/learnify-backend";
+
+app.delete("/courses/:id", checkAuth, checkRole(["ADMIN"]), deleteCourse);
+```
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `allowedRoles` | `Role[]` | Non-empty array of unique roles |
+| `options.mode` | `"Any" \| "All" \| "Exact"` | Matching strategy. Default `"Any"` |
+
+| Mode | Authorized when |
+| --- | --- |
+| `Any` | The user has at least one of `allowedRoles` |
+| `All` | The user has every role in `allowedRoles` (extra roles allowed) |
+| `Exact` | The user's roles are exactly `allowedRoles` (no missing or extra roles) |
+
+```ts
+checkRole(["ADMIN", "INSTRUCTOR"]);                    // either role
+checkRole(["ADMIN", "INSTRUCTOR"], { mode: "All" });   // both roles, extras OK
+checkRole(["ADMIN", "INSTRUCTOR"], { mode: "Exact" }); // exactly these two
+```
+
+| Situation | Result |
+| --- | --- |
+| Authorized | Calls `next()` |
+| No session claims, no `roles`, or empty `roles` | `403` `{ "message": "User roles not found" }` |
+| Roles don't satisfy the mode (or an unknown mode is passed) | `403` `{ "message": "Forbidden" }` |
+| `allowedRoles` empty or contains duplicates | `next(Error)` → `500` (misconfiguration) |
+| Clerk roles contain duplicates or values outside `validRoles` | `next(Error)` → `500` (bad upstream data) |
+
+#### `validationMiddleware(schemas)`
+
+Returns a middleware that validates any combination of `body`, `params` and
+`query` against Zod schemas. Omitted (or `undefined`) locations are skipped.
+
+```ts
+import { z } from "zod";
+import { validationMiddleware } from "@mustafahmed1997/learnify-backend";
+
+app.get(
+  "/courses/:id/lessons",
+  validationMiddleware({
+    params: z.object({ id: z.uuid() }),
+    query: z.object({ page: z.coerce.number().int().positive().default(1) }),
+  }),
+  (req, res) => {
+    // req.query.page is a number here, not a string
+  },
+);
+```
+
+- **On success** it calls `next()` and replaces `req.body`, `req.params` and
+  `req.query` with each schema's parsed output. Coercions, defaults,
+  transforms and stripped unknown keys are all visible to the handler.
+- **On failure** it calls `next(new ValidationError("Validation failed", errors))`.
+  It collects every issue from every location in one pass and never writes
+  to `res` itself. Invalid locations are left untouched on `req`.
+- Each error item is `{ location, field, message }`. `field` is the Zod issue
+  path joined with `.` (e.g. `address.city`, `tags.1`), or `""` when the
+  whole location is invalid (e.g. a missing body).
+
+> TypeScript note: `req.body`, `req.params` and `req.query` keep their Express
+> types after validation. Cast or re-parse in the handler if you need the
+> schema's inferred type.
+
+### Errors
+
+#### `AppError`
+
+```ts
+new AppError(message: string, statusCode: number)
+```
+
+An `Error` subclass with a `statusCode`. Its prototype chain is preserved, so
+`instanceof AppError` works for subclasses too.
+
+```ts
+import { AppError } from "@mustafahmed1997/learnify-backend";
+
+throw new AppError("Course not found", 404);
+
+class ConflictError extends AppError {
+  constructor(message: string) {
+    super(message, 409);
+  }
+}
+```
+
+#### `ValidationError`
+
+```ts
+new ValidationError(message: string, errors: ValidationErrorItem[])
+```
+
+An `AppError` whose `statusCode` is always `400`, carrying field-level
+details in `errors`. `validationMiddleware` produces these, and you can throw
+one yourself:
+
+```ts
+import { ValidationError } from "@mustafahmed1997/learnify-backend";
+
+throw new ValidationError("Validation failed", [
+  { location: "body", field: "email", message: "Email already in use" },
+]);
+```
+
+#### `globalErrorHandler(err, req, res, next)`
+
+Express error-handling middleware. Register it after all routes. See
+[Error handling](#error-handling) for its response contract.
+
+#### `handlePrismaError(error)`
+
+```ts
+handlePrismaError(error: unknown): { status: number; message: string }
+```
+
+Maps a Prisma error to an HTTP status and message. It never throws, and it
+doesn't import `@prisma/client`; it inspects the error's shape:
+
+- A **known request error** is any object whose `code` is a string matching
+  `P` + four digits (e.g. `PrismaClientKnownRequestError`).
+- A **validation error** is any object whose `name` is
+  `"PrismaClientValidationError"`.
+
+| Input | `status` | `message` |
+| --- | --- | --- |
+| `P2002` unique constraint | `409` | `Duplicate value for <meta.target>` (falls back to `field`; arrays are comma-joined) |
+| `P2003` foreign key | `400` | `Invalid foreign key reference` |
+| `P2014` relation violation | `400` | `Invalid relation reference` |
+| `P2025` record not found | `404` | `Record not found` |
+| `P2000` value too long | `400` | `Value too long for <meta.column_name>` (falls back to `column`) |
+| Any other `P####` code | `500` | `Database error: <error.message>` |
+| `PrismaClientValidationError` | `400` | `Invalid input data: <error.message>` |
+| Anything else (incl. `null`, strings) | `500` | `Non-prisma error: <message or String(value)>` |
+
+```ts
+const { status, message } = handlePrismaError(err);
+```
+
+#### `handleCaughtError(error, next)`
+
+```ts
+handleCaughtError(error: unknown, next: NextFunction): void
+```
+
+The recommended way to forward an error from a `catch` block. It decides what
+reaches `globalErrorHandler`:
+
+| Caught error | Passed to `next()` | Client sees |
+| --- | --- | --- |
+| `AppError` / `ValidationError` | The same error, unchanged | Its status and message |
+| Prisma error mapped to a 4xx (`P2000`, `P2002`, `P2003`, `P2014`, `P2025`, validation) | `new AppError(message, status)` | e.g. `404 Record not found` |
+| Anything mapped to `500` (other Prisma codes, non-Prisma errors, non-`Error` values) | The original value | Generic `500 Internal server error` |
+
+Server errors are forwarded untouched on purpose. Their real messages are
+logged by `globalErrorHandler` and never sent to clients.
+
+### Response and message helpers
+
+#### `getJsonResponse(options)`
+
+```ts
+getJsonResponse<TData, TAdditionalInfo>({
+  success: boolean;            // required, always included
+  message?: string;
+  data?: TData;
+  additionalInfo?: TAdditionalInfo;
+  error?: string;
+})
+```
+
+Builds a response body that contains `success` plus only the optional fields
+that are not `undefined`. Falsy values such as `0`, `false`, `""` and `null`
+are kept.
+
+```ts
+res.json(
+  getJsonResponse({
+    success: true,
+    data: courses,
+    additionalInfo: { page: 1, total: 42 },
+  }),
+);
+// { "success": true, "data": [...], "additionalInfo": { "page": 1, "total": 42 } }
+```
+
+#### `getSuccessMsg(resource, verb, action)` / `getErrorMsg(resource, verb, message)`
+
+```ts
+getSuccessMsg("Course", "has", "created");   // "Course has been created successfully"
+getSuccessMsg("Courses", "have", "deleted"); // "Courses have been deleted successfully"
+getErrorMsg("Course", "was", "not found");   // "Course was not found"
+getErrorMsg("Courses", "were", "not found"); // "Courses were not found"
+```
+
+`verb` is typed as `"has" | "have"` and `"was" | "were"` respectively. The
+resource is not pluralized automatically.
+
+#### Validation message builders
+
+| Function | Returns |
+| --- | --- |
+| `requiredFieldMsg(field)` | `"<field> is required"` |
+| `minLengthMsg(min)` | `"Minimum length is <min>"` |
+| `maxLengthMsg(max)` | `"Maximum length is <max>"` |
+| `invalidSchemaFormatMsg(field, format)` | `"<field> should match format: <format>"` |
+| `invalidEmailMsg()` | `"Invalid email format"` |
+| `invalidPasswordMsg()` | `"Password should be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character"` |
+| `invalidNumberMsg(field)` | `"Invalid number format for field: <field>"` |
+| `positiveNumberMsg(field)` | `"<field> should be positive"` |
+| `invalidUrlMsg()` | `"Invalid URL"` |
+| `invalidDateFormatMsg()` | `"Invalid date format"` |
+| `futureDateRequiredMsg()` | `"Date must be in the future"` |
+
+```ts
+import { z } from "zod";
+import {
+  invalidEmailMsg,
+  maxLengthMsg,
+  minLengthMsg,
+} from "@mustafahmed1997/learnify-backend";
+
+const signUpSchema = z.object({
+  email: z.email(invalidEmailMsg()),
+  name: z.string().min(2, minLengthMsg(2)).max(50, maxLengthMsg(50)),
+});
+```
+
+### Role utilities and constants
+
+```ts
+import {
+  checkUnique,
+  checkValidRoles,
+  validRoles,
+  type Role,
+} from "@mustafahmed1997/learnify-backend";
+
+validRoles;                             // readonly ["STUDENT", "INSTRUCTOR", "ADMIN"]
+checkUnique(["ADMIN", "ADMIN"]);        // false (case-sensitive; [] → true)
+checkValidRoles(["ADMIN", "STUDENT"]);  // true
+checkValidRoles(["ADMIN", "admin"]);    // false (case-sensitive; [] → true)
+```
+
+`checkRole` uses these internally. They're exported for custom role checks,
+for example when validating role updates.
+
+### Types
+
+| Type | Definition |
+| --- | --- |
+| `Role` | `"STUDENT" \| "INSTRUCTOR" \| "ADMIN"` |
+| `Location` | `"body" \| "params" \| "query"` |
+| `ValidationErrorItem` | `{ location: Location; field: string; message: string }` |
+| `ClerkUser` | `{ clerkId: string; userMetadata: { role: Role; dbUserId: string }; email?; firstName?; lastName?; imageURL? }` |
+| `JsonResponseOptions<TData, TAdditionalInfo>` | Options accepted by `getJsonResponse` |
+| `RoleCheckMode` | `"All" \| "Exact" \| "Any"` |
+| `CheckRoleOptions` | `{ mode: RoleCheckMode }` |
+
+**`req.user` typing.** Importing anything from the package root loads a global
+augmentation that types `req.user` as `ClerkUser | undefined` on Express's
+`Request`. No local `express.d.ts` is needed.
+
+> `ClerkUser.userMetadata.role` is a single role taken as-is from the session
+> claims, while `checkRole` authorizes against the `userMetadata.roles` array.
+> Make authorization decisions with `checkRole` rather than `req.user`.
+
+## Error handling
+
+There are two paths an error can take:
+
+**1. Responses sent directly by middleware** (`next()` is not called, and
+`globalErrorHandler` doesn't see them):
+
+| Source | Status | Body |
+| --- | --- | --- |
+| `checkAuth` | `401` | `{ "error": "Unauthenticated. Login first please." }` |
+| `checkRole` | `403` | `{ "message": "User roles not found" }` or `{ "message": "Forbidden" }` |
+
+These bodies don't include a `success` field.
+
+**2. Errors passed to `next()`** and rendered by `globalErrorHandler`. This
+covers `ValidationError` from `validationMiddleware`, errors forwarded by
+`handleCaughtError`, configuration errors from `checkRole`, errors from
+`checkAuth`, and anything thrown or rejected in your handlers (Express 5
+forwards rejected promises automatically).
+
+`globalErrorHandler` logs every error with `console.error`, then responds:
+
+| Error | Status | Body |
+| --- | --- | --- |
+| `ValidationError` | `400` | `{ "success": false, "error": "Validation failed", "errors": [ { "location": "body", "field": "title", "message": "..." } ] }` |
+| Any other `AppError` | `err.statusCode` | `{ "success": false, "error": err.message }` |
+| Anything else | `500` | `{ "success": false, "error": "Internal server error" }` |
+
+The `500` body is fixed: messages and stack traces of unexpected errors are
+never sent to clients. Only `AppError` instances get their own status, so a raw
+Prisma error that reaches the handler becomes a `500`. Route `catch` blocks
+through `handleCaughtError` to get `404`/`409`/`400` for Prisma errors:
+
+```ts
+try {
+  await prisma.enrollment.create({ data });
+} catch (error) {
+  handleCaughtError(error, next); // P2002 → 409 "Duplicate value for ..."
+}
+```
+
+## Testing
+
+Tests use [Vitest](https://vitest.dev) 3 in a Node environment and live in
+`tests/**/*.test.ts` (see `vitest.config.ts`). Clerk is mocked with
+`vi.mock("@clerk/express")`, and Express `req`/`res`/`next` are lightweight
+stubs, so no network, Clerk instance or database is needed.
 
 ```bash
-npm test        # runs the full suite once (vitest run)
-npm run test:watch
+npm test                                   # run the whole suite once
+npm run test:watch                         # watch mode
+npx vitest run tests/checkRole.test.ts     # a single file
+npx vitest run -t "handleCaughtError"      # tests matching a name
 ```
 
-## Type checking
+Coverage isn't configured in this repository. To measure it locally, install
+the V8 provider that matches the Vitest version, then run:
 
 ```bash
-npm run typecheck
+npm install --no-save @vitest/coverage-v8@3
+npx vitest run --coverage --coverage.include="src/**"
 ```
 
-## Building
+## Build and development
+
+| Script | Command | Purpose |
+| --- | --- | --- |
+| `npm run build` | `tsc -p tsconfig.build.json` | Compile `src/` to `dist/` (JS, `.d.ts`, source maps) |
+| `npm run typecheck` | `tsc -p tsconfig.json` | Type-check `src/` and `tests/` without emitting |
+| `npm test` | `vitest run` | Run the test suite once |
+| `npm run test:watch` | `vitest` | Run tests in watch mode |
+
+There are no lint or format scripts.
+
+## Project structure
+
+```text
+src/
+  index.ts                 # public entry point: every export lives here
+  constants/validRoles.ts  # validRoles, Role
+  errors/                  # AppError, ValidationError, globalErrorHandler, handlePrismaError
+  middlewares/             # checkAuth, checkRole, validationMiddleware
+  types/                   # ClerkUser, Location, Express Request augmentation
+  utils/                   # response/message helpers, role checks, handleCaughtError
+tests/                     # one *.test.ts per module, plus index.test.ts for the export list
+tsconfig.json              # strict, node16 modules; includes src and tests (typecheck)
+tsconfig.build.json        # extends tsconfig.json; emits src → dist
+vitest.config.ts           # Node environment, tests/**/*.test.ts
+```
+
+## Contributing
+
+1. **Add the implementation** under the matching `src/` folder. Use explicit
+   `.js` extensions in relative imports (required by `node16` module
+   resolution).
+2. **Export it** from `src/index.ts`. Use `export type` for type-only exports.
+3. **Update the export list** in `tests/index.test.ts`. That test fails if the
+   public surface changes unexpectedly.
+4. **Write tests** in `tests/<name>.test.ts`. Cover success, failure and edge
+   cases. Mock `@clerk/express` and stub `req`/`res`/`next` as the existing
+   tests do.
+5. **Verify**: `npm run typecheck && npm test && npm run build`.
+6. **Document it** in this README: add it to the Features table and the API
+   reference.
+
+## Publishing
+
+- The package entry is `dist/index.js` with types at `dist/index.d.ts`,
+  exposed through a single `"."` export (ESM `import` condition only).
+- Only `dist/` is published (`"files": ["dist"]`). `dist/` is git-ignored.
+- It's published publicly to npm (`publishConfig.access: "public"`).
+- There is no `prepublishOnly` hook, so build before publishing:
 
 ```bash
-npm run build
+npm run typecheck && npm test && npm run build
+npm version <patch|minor|major>
+npm publish
 ```
 
-Compiles `src/` to `dist/` (via `tsconfig.build.json`), producing the ESM
-output and `.d.ts` declarations referenced by `main`/`types` in
-`package.json`.
+## License
 
-## What this package does not do
-
-- Does not depend on Prisma or any database (`handlePrismaError` only maps
-  error shapes — it never imports `@prisma/client`).
-- Does not call the Auth Service (or any other service) over HTTP.
-- Does not manage Clerk session creation — that's handled by `clerkMiddleware()`.
+ISC

@@ -38,7 +38,14 @@ export function validationMiddleware(validaitonSchema: validationSchemaType) {
             req.params = result.data as typeof req.params;
             break;
           case "query":
-            req.query = result.data as typeof req.query;
+            // Express 5 exposes req.query as a getter-only property, so a
+            // plain assignment throws; shadow it with an own data property.
+            Object.defineProperty(req, "query", {
+              value: result.data,
+              writable: true,
+              enumerable: true,
+              configurable: true,
+            });
             break;
         }
       }

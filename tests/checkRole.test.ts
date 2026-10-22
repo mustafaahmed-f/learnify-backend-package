@@ -277,4 +277,47 @@ describe("checkRole", () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
   });
+
+
+  it("reads the Clerk auth state from the incoming request", () => {
+    mockUserRoles(["ADMIN"]);
+    const req = { headers: {} } as Request;
+
+    checkRole(["ADMIN"])(req, createRes(), vi.fn() as NextFunction);
+
+    expect(getAuth).toHaveBeenCalledWith(req);
+  });
+
+  it("forbids when an unsupported mode is passed at runtime", () => {
+    mockUserRoles(["ADMIN"]);
+    const res = createRes();
+    const next = vi.fn() as NextFunction;
+
+    checkRole(["ADMIN"], { mode: "Some" as never })(
+      {} as Request,
+      res,
+      next,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ message: "Forbidden" });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("can be reused across requests without leaking state", () => {
+    const middleware = checkRole(["INSTRUCTOR"]);
+
+    mockUserRoles(["INSTRUCTOR"]);
+    const allowedNext = vi.fn() as NextFunction;
+    middleware({} as Request, createRes(), allowedNext);
+
+    mockUserRoles(["STUDENT"]);
+    const deniedRes = createRes();
+    const deniedNext = vi.fn() as NextFunction;
+    middleware({} as Request, deniedRes, deniedNext);
+
+    expect(allowedNext).toHaveBeenCalledWith();
+    expect(deniedRes.status).toHaveBeenCalledWith(403);
+    expect(deniedNext).not.toHaveBeenCalled();
+  });
 });

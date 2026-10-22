@@ -245,4 +245,109 @@ describe("validationMiddleware", () => {
     expect(err.statusCode).toBe(400);
     expect(err.message).toBe("Validation failed");
   });
+
+
+  describe("writing parsed data back to the request", () => {
+    it("replaces req.body with the parsed output (defaults and stripped keys)", () => {
+      const schema = z.object({
+        title: z.string().trim(),
+        published: z.boolean().default(false),
+      });
+      const req = {
+        body: { title: "  Intro to TS  ", extra: "dropped" },
+      } as Request;
+      const next = vi.fn() as NextFunction;
+
+      validationMiddleware({ body: schema })(req, createRes(), next);
+
+      expect(next).toHaveBeenCalledWith();
+      expect(req.body).toEqual({ title: "Intro to TS", published: false });
+    });
+
+    it("replaces req.params with the parsed output", () => {
+      const schema = z.object({ id: z.coerce.number().int() });
+      const req = { params: { id: "42" } } as unknown as Request;
+
+      validationMiddleware({ params: schema })(req, createRes(), vi.fn());
+
+      expect(req.params).toEqual({ id: 42 });
+    });
+
+    it("leaves an invalid location untouched on the request", () => {
+      const original = { name: 123 };
+      const req = { body: original } as Request;
+
+      validationMiddleware({ body: bodySchema })(req, createRes(), vi.fn());
+
+      expect(req.body).toBe(original);
+    });
+  });
+
+  describe("error item contents", () => {
+    it("uses the schema's custom message for each failing field", () => {
+      const schema = z.object({
+        email: z.email("Invalid email format"),
+      });
+      const req = { body: { email: "not-an-email" } } as Request;
+      const next = vi.fn() as NextFunction;
+
+      validationMiddleware({ body: schema })(req, createRes(), next);
+
+      const err = vi.mocked(next).mock.calls[0][0] as unknown as ValidationError;
+      expect(err.errors).toEqual([
+        { location: "body", field: "email", message: "Invalid email format" },
+      ]);
+    });
+
+    it("reports an empty field path when the whole location fails", () => {
+      const req = { body: undefined } as unknown as Request;
+      const next = vi.fn() as NextFunction;
+
+      validationMiddleware({ body: bodySchema })(req, createRes(), next);
+
+      const err = vi.mocked(next).mock.calls[0][0] as unknown as ValidationError;
+      expect(err.errors).toHaveLength(1);
+      expect(err.errors[0].field).toBe("");
+    });
+
+    it("joins array indexes into the field path", () => {
+      const schema = z.object({ tags: z.array(z.string()) });
+      const req = { body: { tags: ["ok", 5] } } as Request;
+      const next = vi.fn() as NextFunction;
+
+      validationMiddleware({ body: schema })(req, createRes(), next);
+
+      const err = vi.mocked(next).mock.calls[0][0] as unknown as ValidationError;
+      expect(err.errors[0].field).toBe("tags.1");
+    });
+  });
+
+
+  it("writes req.query even when it is a getter-only property (Express 5)", () => {
+    const expressLikeProto = {};
+    Object.defineProperty(expressLikeProto, "query", {
+      get: () => ({ page: "3" }),
+      configurable: true,
+    });
+    const req = Object.create(expressLikeProto) as Request;
+    const next = vi.fn() as NextFunction;
+
+    validationMiddleware({ query: querySchema })(req, createRes(), next);
+
+    expect(next).toHaveBeenCalledWith();
+    expect(req.query).toEqual({ page: 3 });
+  });
+
+  it("skips a location whose schema key is present but undefined", () => {
+    const req = { body: { name: "Ada", age: 30 } } as Request;
+    const next = vi.fn() as NextFunction;
+
+    validationMiddleware({ body: bodySchema, query: undefined })(
+      req,
+      createRes(),
+      next,
+    );
+
+    expect(next).toHaveBeenCalledWith();
+  });
 });
