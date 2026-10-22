@@ -12,6 +12,7 @@ export function globalErrorHandler(
 
   if (err instanceof ValidationError) {
     return res.status(err.statusCode).json({
+      success: false,
       error: err.message,
       errors: err.errors,
     });
@@ -19,11 +20,13 @@ export function globalErrorHandler(
 
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
+      success: false,
       error: err.message,
     });
   }
 
   return res.status(500).json({
+    success: false,
     error: "Internal server error",
   });
 }
@@ -32,6 +35,7 @@ export function globalErrorHandler(
 * Error json due to validation error : 
 
 {
+  "success": false,
   "error": "Validation failed",
   "errors": [
     {

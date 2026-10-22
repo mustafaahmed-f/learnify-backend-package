@@ -38,5 +38,7 @@ export {
   invalidUrlMsg,
 } from "./utils/validationErrorMessages.js";
 
+export { handleCaughtError } from "./utils/handleCaughtError.js";
+
 export type { ClerkUser } from "./types/ClerkUser.js";
 export type { Location } from "./types/locationType.js";
