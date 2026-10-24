@@ -8,7 +8,8 @@ export function globalErrorHandler(
   res: Response,
   next: NextFunction,
 ) {
-  console.error(err);
+  console.error("Inside global error handler : ", err);
+  console.log("End of global error logger !!");
 
   if (err instanceof ValidationError) {
     return res.status(err.statusCode).json({
