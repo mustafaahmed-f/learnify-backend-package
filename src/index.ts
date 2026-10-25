@@ -23,6 +23,7 @@ export { getJsonResponse } from "./utils/getJsonResponse.js";
 export type { JsonResponseOptions } from "./utils/getJsonResponse.js";
 export { checkUnique } from "./utils/checkUnique.js";
 export { checkValidRoles } from "./utils/checkValidRoles.js";
+export { pagination } from "./utils/pagination.js";
 
 export {
   requiredFieldMsg,
