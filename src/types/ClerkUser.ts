@@ -4,7 +4,7 @@ export type ClerkUser = {
   clerkId: string;
 
   userMetadata: {
-    role: (typeof validRoles)[number];
+    roles: (typeof validRoles)[number][];
     dbUserId: string;
   };
 
