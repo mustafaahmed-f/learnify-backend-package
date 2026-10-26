@@ -8,7 +8,7 @@ export function orderByObject(sortQuery: string, sortableFields: string[]) {
   if (!sortQuery.trim()) return {};
 
   const sortParts = sortQuery.split("/");
-  const orderBy: Record<string, "asc" | "desc"> = {};
+  const orderObject: Record<string, "asc" | "desc"> = {};
 
   for (const part of sortParts) {
     const isDescending = part.startsWith("-");
@@ -18,8 +18,14 @@ export function orderByObject(sortQuery: string, sortableFields: string[]) {
       throw new AppError(`Invalid sort field: ${field}`, 400);
     }
 
-    orderBy[field] = isDescending ? "desc" : "asc";
+    orderObject[field] = isDescending ? "desc" : "asc";
   }
+
+  const orderBy = [
+    ...Object.entries(orderObject).map(([field, direction]) => ({
+      [field]: direction,
+    })),
+  ];
 
   return orderBy;
 }
