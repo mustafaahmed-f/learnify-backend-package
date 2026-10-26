@@ -1,11 +1,10 @@
 import { AppError } from "../errors/AppError.js";
 
 export function orderByObject(sortQuery: string, sortableFields: string[]) {
-  //* The sort query should be in this form : "createdAt/-updatedAt"
-  //* where craetedAt is in ascending order
-  //* and updatedAt is in descending order
+  // Example: "createdAt/-updatedAt"
+  // createdAt: ascending, updatedAt: descending
 
-  if (!sortQuery.trim()) return {};
+  if (!sortQuery.trim()) return [];
 
   const sortParts = sortQuery.split("/");
   const orderObject: Record<string, "asc" | "desc"> = {};
@@ -21,11 +20,7 @@ export function orderByObject(sortQuery: string, sortableFields: string[]) {
     orderObject[field] = isDescending ? "desc" : "asc";
   }
 
-  const orderBy = [
-    ...Object.entries(orderObject).map(([field, direction]) => ({
-      [field]: direction,
-    })),
-  ];
-
-  return orderBy;
+  return Object.entries(orderObject).map(([field, direction]) => ({
+    [field]: direction,
+  }));
 }
