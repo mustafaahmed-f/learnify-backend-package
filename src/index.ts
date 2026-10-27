@@ -26,6 +26,8 @@ export { checkValidRoles } from "./utils/checkValidRoles.js";
 export { pagination } from "./utils/pagination.js";
 export { orderByObject } from "./utils/orderByObject.js";
 
+export { optionalQueryString } from "./utils/optionalQueryString.js";
+
 export {
   requiredFieldMsg,
   minLengthMsg,
