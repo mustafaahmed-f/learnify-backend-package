@@ -165,9 +165,19 @@ app.get("/me", checkAuth, (req, res) => {
 
 | Situation | Result |
 | --- | --- |
-| Authenticated with a `userId` | Sets `req.user`, calls `next()` |
+| Authenticated with a `userId`, not banned | Sets `req.user`, calls `next()` |
 | Not authenticated, or no `userId` | Responds `401` `{ "error": "Unauthenticated. Login first please." }`; `next()` is not called |
+| Authenticated, but banned in Clerk | Responds `403` `{ "success": false, "error": "Your account has been blocked." }`; `next()` is not called |
+| Ban status cannot be read from Clerk | Calls `next(AppError)` → `503` from `globalErrorHandler`; the request is not let through |
 | `getAuth` throws (e.g. `clerkMiddleware()` missing) | Calls `next(error)` → `500` from `globalErrorHandler` |
+
+Session tokens are verified locally, so they don't reflect a ban. `checkAuth`
+reads the ban status with `clerkClient.users.getUser`, which needs
+`CLERK_SECRET_KEY`, and caches the result per process for 15 seconds, so a ban
+in Clerk takes effect within 15 seconds and each active user costs at most one
+Backend API call per 15 seconds per instance. Only a ban already applied in
+Clerk is enforced: this check can't see a block still pending in the Auth
+service outbox.
 
 `req.user` is built from the session token: `clerkId` comes from `userId`.
 `email`, `firstName`, `lastName`, `imageURL` and `userMetadata` are read from
@@ -459,9 +469,11 @@ There are two paths an error can take:
 | Source | Status | Body |
 | --- | --- | --- |
 | `checkAuth` | `401` | `{ "error": "Unauthenticated. Login first please." }` |
+| `checkAuth` | `403` | `{ "success": false, "error": "Your account has been blocked." }` |
 | `checkRole` | `403` | `{ "message": "User roles not found" }` or `{ "message": "Forbidden" }` |
 
-These bodies don't include a `success` field.
+Apart from the blocked-account response, these bodies don't include a `success`
+field.
 
 **2. Errors passed to `next()`** and rendered by `globalErrorHandler`. This
 covers `ValidationError` from `validationMiddleware`, errors forwarded by
