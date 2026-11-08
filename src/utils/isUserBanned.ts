@@ -47,6 +47,16 @@ export function isUserBanned(clerkId: string): Promise<boolean> {
     }
   }
 
+  //* We cache the Promise itself instead of waiting for the Boolean result.
+  //* This allows us to store it immediately, while the Clerk API request is still running.
+  //
+  //* If multiple requests from the same user arrive simultaneously:
+  //* - The first request starts the Clerk API call and stores its pending Promise.
+  //* - The following requests find that Promise in the cache and reuse it.
+  //* - All requests await the same Promise and receive the same Boolean result.
+  //
+  //* This prevents multiple simultaneous requests from making duplicate Clerk API calls.
+
   const banned = fetchBanStatus(clerkId);
 
   banStatusCache.set(clerkId, {
